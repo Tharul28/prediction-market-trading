@@ -1,0 +1,15 @@
+{
+  "markets": [
+    "SIM-A",
+    "SIM-B",
+    "SIM-C"
+  ],
+  "mutually_exclusive": true,
+  "exhaustive": true,
+  "settlement": {
+    "SIM-A": 0,
+    "SIM-B": 100,
+    "SIM-C": 0
+  },
+  "description": "Simulated 3-outcome market, seed 0, 2.0 hours"
+}

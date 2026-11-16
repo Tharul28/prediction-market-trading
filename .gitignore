@@ -1,0 +1,10 @@
+__pycache__/
+.pytest_cache/
+data/raw/
+paper_runs/
+results/real_*/
+results/comparison_*/
+.venv/
+.DS_Store
+.idea/
+.vscode/
