@@ -31,6 +31,13 @@ class ReplayClient:
         self.times = {m: np.array([s.timestamp for s in snaps]) for m, snaps in self.snapshots.items()}
         self.trades = data.trades.reset_index(drop=True)
         self.trades["trade_id"] = [f"t{i}" for i in range(len(self.trades))]
+        self.close_time = float("inf")  # markets report "closed" from this clock time on
+        self.results: dict[str, str] = {}
+
+    def get_market(self, ticker: str) -> dict[str, Any]:
+        closed = self.clock.now >= self.close_time
+        return {"ticker": ticker, "status": "finalized" if closed else "active",
+                "result": self.results.get(ticker, "") if closed else ""}
 
     def get_orderbook(self, ticker: str, depth: int = 10):
         index = int(np.searchsorted(self.times[ticker], self.clock.now, side="right")) - 1

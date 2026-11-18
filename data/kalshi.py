@@ -18,8 +18,12 @@ Example (run from the project root, on your own machine)::
     python -m data.kalshi settle --out data/raw/example     # after the markets resolve
     python scripts/run_all.py --data data/raw/example --compare
 
-Stop the collector with Ctrl+C. Run the same ``collect`` command again (the
-market list can be omitted on restart) and it carries on where it stopped.
+The collector stops by itself once Kalshi reports every market as closed,
+then saves the settlement when the results are published. Stop it early with
+Ctrl+C. Run the same ``collect`` command again (the market list can be
+omitted on restart) and it carries on where it stopped. ``--start-at`` makes
+it wait until a given time first, e.g. 30 minutes before kick-off. Rate
+limiting (HTTP 429) and network errors are retried with backoff.
 
 Kalshi order book quirk
 -----------------------
@@ -155,6 +159,23 @@ def parse_settlement(markets: list[dict[str, Any]]) -> dict[str, int] | None:
 
 
 # --------------------------------------------------------------------------- client
+RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def retry_delay_s(attempt: int, retry_after: str | None, base_s: float = 1.0, cap_s: float = 30.0) -> float:
+    """Seconds to wait before retry number ``attempt`` (0-based).
+
+    Uses the server's ``Retry-After`` header when it gives a number of
+    seconds, otherwise exponential backoff: 1, 2, 4, 8, ... seconds, capped.
+    """
+    if retry_after:
+        try:
+            return min(max(float(retry_after), 0.0), cap_s)
+        except ValueError:
+            pass  # an HTTP date instead of seconds: fall back to backoff
+    return min(base_s * 2 ** attempt, cap_s)
+
+
 @dataclass
 class KalshiClient:
     """Minimal read-only client for Kalshi's public market data endpoints.
@@ -164,20 +185,47 @@ class KalshiClient:
             ``ALTERNATIVE_BASE_URL``.
         timeout_s: HTTP timeout per request.
         pause_s: Pause after every request, to stay well inside rate limits.
+        max_retries: Retries for rate limiting (HTTP 429), server errors and
+            network errors, with backoff between them, before giving up.
+        http_get: Function with the signature of ``requests.get``. Only
+            replaced in tests.
+        sleep: Function with the signature of ``time.sleep``. Only replaced
+            in tests.
     """
 
     base_url: str = DEFAULT_BASE_URL
     timeout_s: float = 10.0
     pause_s: float = 0.1
+    max_retries: int = 5
+    http_get: Callable[..., Any] | None = None
+    sleep: Callable[[float], None] = time.sleep
+    retries_used: int = 0  # running count, reported by the collector
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """GET a path and return the parsed JSON, raising on HTTP errors."""
+        """GET a path and return the parsed JSON.
+
+        Rate limiting (429), server errors (5xx) and network errors are
+        retried with backoff; other HTTP errors are raised at once.
+        """
         import requests  # imported here so the rest of the project runs without it
 
-        response = requests.get(f"{self.base_url}{path}", params=params, timeout=self.timeout_s)
-        response.raise_for_status()
-        time.sleep(self.pause_s)
-        return response.json()
+        http_get = self.http_get or requests.get
+        attempt = 0
+        while True:
+            try:
+                response = http_get(f"{self.base_url}{path}", params=params, timeout=self.timeout_s)
+            except (requests.ConnectionError, requests.Timeout):
+                if attempt >= self.max_retries:
+                    raise
+                self.sleep(retry_delay_s(attempt, None))
+            else:
+                if response.status_code not in RETRY_STATUS_CODES or attempt >= self.max_retries:
+                    response.raise_for_status()
+                    self.sleep(self.pause_s)
+                    return response.json()
+                self.sleep(retry_delay_s(attempt, response.headers.get("Retry-After")))
+            attempt += 1
+            self.retries_used += 1
 
     def list_events(self, status: str = "open", limit: int = 20) -> list[dict[str, Any]]:
         """Return up to ``limit`` events with the given status."""
@@ -262,6 +310,11 @@ class CollectorConfig:
         exhaustive: Whether exactly one must resolve YES (check the rules).
         description: Free text saved in ``meta.json``.
         max_polls: Stop after this many polls (None = run until Ctrl+C).
+        status_check_s: How often to ask Kalshi whether the markets are still
+            open. Once every market has closed the collector stops by itself.
+            None turns the check off.
+        settle_wait_s: After stopping because the markets closed, keep
+            trying to save the settlement for up to this many seconds.
     """
 
     out_dir: Path
@@ -273,6 +326,14 @@ class CollectorConfig:
     exhaustive: bool = False
     description: str = ""
     max_polls: int | None = None
+    status_check_s: float | None = 60.0
+    settle_wait_s: float = 1800.0
+    market_info: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+# Kalshi market statuses after which no more trading happens. "inactive" is
+# left out on purpose: it can be a temporary pause.
+CLOSED_STATUSES = {"closed", "determined", "disputed", "amended", "finalized", "settled"}
 
 
 class KalshiCollector:
@@ -334,6 +395,11 @@ class KalshiCollector:
             meta.setdefault("exhaustive", self.config.exhaustive)
         meta.setdefault("settlement", None)
         meta["description"] = self.config.description or meta.get("description", "Kalshi collector")
+        # Schedule as known when collection started. Never overwritten on restart:
+        # Kalshi later moves close_time to the actual close, which would leak the future.
+        info = meta.setdefault("market_info", {})
+        for ticker, details in self.config.market_info.items():
+            info.setdefault(ticker, details)
         _write_json_atomically(self.meta_path, meta)
 
         if self.trades_path.exists() and self.trades_path.stat().st_size > 0:
@@ -401,21 +467,66 @@ class KalshiCollector:
         _write_json_atomically(self.state_path, {"last_trade_ts": self.last_trade_ts, "updated": self.clock()})
         return snapshots, new_trades
 
-    def run(self) -> None:
-        """Poll every ``interval_s`` seconds until Ctrl+C or ``max_polls``."""
+    def markets_closed(self) -> bool:
+        """True if Kalshi reports every collected market as closed or settled.
+
+        A failed status request counts as "still open", so a network problem
+        never stops a recording early.
+        """
+        try:
+            statuses = [self.client.get_market(ticker).get("status") for ticker in self.tickers]
+        except Exception as error:
+            print(f"  market status check failed ({error})")
+            return False
+        return all(status in CLOSED_STATUSES for status in statuses)
+
+    def run(self) -> str:
+        """Poll every ``interval_s`` seconds until the markets close, Ctrl+C or ``max_polls``.
+
+        Returns:
+            Why it stopped: "closed", "interrupted" or "max_polls".
+        """
         print(f"Collecting {len(self.tickers)} markets every {self.config.interval_s}s into {self.out_dir}")
         polls = 0
+        last_status_check = self.clock()
+        retries_reported = 0
         try:
             while self.config.max_polls is None or polls < self.config.max_polls:
                 started = time.time()
                 snapshots, trades = self.poll_once()
                 polls += 1
                 if polls % 12 == 1:
+                    retries = getattr(self.client, "retries_used", 0)
+                    note = f", {retries - retries_reported} rate-limit/network retries" if retries > retries_reported else ""
+                    retries_reported = retries
                     print(f"  poll {polls}: {len(snapshots)} snapshots, {len(trades)} new trades "
-                          f"({len(self.seen_trade_ids)} trades saved in total)")
+                          f"({len(self.seen_trade_ids)} trades saved in total{note})")
+                check_every = self.config.status_check_s
+                if check_every is not None and self.clock() - last_status_check >= check_every:
+                    last_status_check = self.clock()
+                    if self.markets_closed():
+                        print(f"All markets have closed after {polls} polls; stopping.")
+                        self._settle_when_ready()
+                        return "closed"
                 time.sleep(max(0.0, self.config.interval_s - (time.time() - started)))
         except KeyboardInterrupt:
             print("Stopped. Run the same command again to resume.")
+            return "interrupted"
+        return "max_polls"
+
+    def _settle_when_ready(self) -> None:
+        """Try to save the settlement, retrying for up to ``settle_wait_s`` seconds."""
+        deadline = time.time() + self.config.settle_wait_s
+        while True:
+            try:
+                if settle(self.client, self.out_dir) is not None:
+                    return
+            except Exception as error:
+                print(f"  settlement lookup failed ({error})")
+            if time.time() >= deadline:
+                print(f"Gave up waiting for results. Later, run: python -m data.kalshi settle --out {self.out_dir}")
+                return
+            time.sleep(min(60.0, max(0.0, deadline - time.time())))
 
 
 def settle(client: KalshiClient, out_dir: str | Path) -> dict[str, int] | None:
@@ -454,6 +565,11 @@ def main() -> None:
                                 help="Markets are outcomes of which at most one can resolve YES")
     collect_parser.add_argument("--exhaustive", action="store_true",
                                 help="Exactly one of the markets must resolve YES (check the event rules)")
+    collect_parser.add_argument("--start-at", default=None,
+                                help="Wait until this time before collecting, e.g. 2026-11-21T14:30:00Z "
+                                     "(no timezone means UTC)")
+    collect_parser.add_argument("--no-auto-stop", action="store_true",
+                                help="Keep collecting after the markets close (default: stop and settle)")
 
     settle_parser = sub.add_parser("settle", help="Save market results once they have resolved")
     settle_parser.add_argument("--out", required=True)
@@ -467,6 +583,8 @@ def main() -> None:
     elif args.command == "settle":
         settle(client, args.out)
     else:
+        if args.start_at:
+            wait_until(parse_utc(args.start_at))
         tickers = list(args.markets)
         mutually_exclusive = args.mutually_exclusive
         description = ""
@@ -477,8 +595,46 @@ def main() -> None:
             description = f"Kalshi event {args.event}: {event.get('title', '')}"
         config = CollectorConfig(out_dir=Path(args.out), tickers=tickers, interval_s=args.interval,
                                  depth=args.depth, mutually_exclusive=mutually_exclusive,
-                                 exhaustive=args.exhaustive, description=description)
+                                 exhaustive=args.exhaustive, description=description,
+                                 status_check_s=None if args.no_auto_stop else 60.0,
+                                 market_info=fetch_market_info(client, tickers))
         KalshiCollector(client, config).run()
+
+
+MARKET_INFO_FIELDS = ("title", "open_time", "close_time", "expected_expiration_time", "latest_expiration_time")
+
+
+def fetch_market_info(client: KalshiClient, tickers: list[str]) -> dict[str, dict[str, Any]]:
+    """Each market's title and schedule as published right now (missing markets are skipped)."""
+    info = {}
+    for ticker in tickers:
+        try:
+            market = client.get_market(ticker)
+        except Exception as error:
+            print(f"  could not fetch details for {ticker} ({error})")
+            continue
+        info[ticker] = {key: market.get(key) for key in MARKET_INFO_FIELDS}
+        info[ticker]["recorded_at"] = pd.Timestamp.now(tz="UTC").isoformat()
+    return info
+
+
+def parse_utc(text: str) -> float:
+    """Parse an ISO time to a Unix timestamp; a time without a timezone is taken as UTC."""
+    stamp = pd.Timestamp(text)
+    if stamp.tzinfo is None:
+        stamp = stamp.tz_localize("UTC")
+    return stamp.timestamp()
+
+
+def wait_until(start: float) -> None:
+    """Sleep until a Unix time, printing when collection will begin."""
+    remaining = start - time.time()
+    if remaining <= 0:
+        return
+    when = pd.Timestamp(start, unit="s", tz="UTC").strftime("%Y-%m-%d %H:%M UTC")
+    print(f"Waiting {remaining / 3600:.1f} h until {when} before collecting", flush=True)
+    while (remaining := start - time.time()) > 0:
+        time.sleep(min(remaining, 300.0))  # short naps so a laptop waking from sleep catches up
 
 
 if __name__ == "__main__":

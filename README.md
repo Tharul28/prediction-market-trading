@@ -51,9 +51,12 @@ Results go to `results/simulated/` (tables) and `results/simulated/charts/` (PNG
 python -m data.kalshi list-events --limit 20                      # find an event
 python -m data.kalshi collect --event EVENT_TICKER --interval 5 --out data/raw/myevent
 # or: python -m data.kalshi collect --markets TICKER1 TICKER2 --interval 5 --out data/raw/mine
-# Leave it running. Ctrl+C to stop; run the same command again to resume.
-python -m data.kalshi settle --out data/raw/myevent               # once the markets resolve
+# It stops by itself once every market has closed and saves the settlement when results are out.
+# Ctrl+C stops it early; run the same command again to resume. Rate limiting (429) is retried with backoff.
+# --start-at 2026-11-21T14:15:00Z waits until that time first (e.g. 15 minutes before kick-off).
+python -m data.kalshi settle --out data/raw/myevent               # only needed if auto-settle gave up
 python scripts/run_all.py --data data/raw/myevent --compare       # backtest real data + compare with simulated
+python scripts/analyse_recording.py --data data/raw/myevent       # P&L around price jumps (goals) vs the rest
 ```
 
 **Paper trading** (no orders are sent anywhere):
@@ -92,7 +95,11 @@ paper/
   report.py         daily summary and paper-versus-backtest comparison
 scripts/
   run_all.py        runs everything and writes tables and charts
+  analyse_recording.py  splits real-data P&L into price-jump windows (goals) and the rest
+  signal_research.py    predicts 10 s / 60 s mid moves: baselines, Ridge, Lasso, Elastic Net
   plotting.py       charts
+research/
+  features.py       lookahead-free features, targets and the time-based train/test split
 tests/              unit tests plus collector/paper tests on a replayed simulation
 results/simulated/  outputs of the last simulated run
 data/simulated/seed0/  the first simulated session, saved in the standard format
@@ -110,7 +117,7 @@ Kalshi won on three practical points beyond cost. Its fee formula is published a
 
 One quirk: Kalshi returns only bids, for YES and for NO. A NO bid at p is an offer to sell YES at 100 - p (one YES plus one NO always pays exactly $1), so `data/kalshi.py` converts NO bids into YES asks.
 
-**What is real and what is simulated in this draft.** The collector, parsers, storage, session splitting, real-data pipeline and paper trader are complete and tested, but only against documented example payloads and a replay of simulated data. They have not been run against the live Kalshi API. Every number in [Results](#results-simulated-data) is from the simulator.
+**What is real and what is simulated in this draft.** The collector, parsers, storage, session splitting, real-data pipeline and paper trader are complete and tested against documented example payloads and a replay of simulated data. The collector and real-data backtest have since been run on live Kalshi recordings (see the jump guard and signal research sections). The paper trader has not been run live. Every number in [Results](#results-simulated-data) is from the simulator.
 
 ## Methodology
 
@@ -179,6 +186,21 @@ Kalshi's fee formula (Decision 5), charged on every fill. The fee per contract i
 * an order already at the right price is left alone, to keep its place in the queue.
 
 The skew is the simplest version of the Avellaneda-Stoikov idea: when long, lower both quotes, so that buying more becomes less likely and selling more likely.
+
+**Jump guard** (scenario `mm_jump_guard`, off by default). Added after the first real football recording, where nearly all of the market maker's losses came in the minute around each goal. Two triggers pull quotes for 30 seconds:
+
+* *Touch collapse*: the best bid or ask keeps its price but at least 80% of its size (of a level of 50+ contracts) vanishes between two snapshots. Before Germany's first goal against the Netherlands, the 51c ask fell from about 20,600 to 937 contracts in three seconds, mostly through cancellations, five seconds before buyers swept the book to 72c. Faster makers had pulled their quotes; the guard copies them and pulls our quote on that side.
+* *Trade through the touch*: a public trade prints 2 or more cents beyond the best bid or ask we last saw, so our picture of the book is stale. Both sides are pulled. (At 1 cent this fires on every ordinary tick, because snapshots are seconds apart.)
+
+On that one match it turned the baseline's -$4.53 across the three markets into roughly breakeven or a small profit, depending on settings and latency, while trading 50-90% fewer contracts. Ten games later (that match; on Nov 16-17 the NFL's LAC at BAL, three NBA games and one NHL game; on Nov 17 four more Nations League matches; 25 markets, `scripts/analyse_recording.py`, 2.5-hour sessions), with settings unchanged:
+
+| Scenario | Net P&L $ | Inside jump windows $ | Contracts | Cents per contract | Better than baseline |
+|---|---|---|---|---|---|
+| Baseline (back of queue, fees on) | -224.83 | -202.14 | 28,257 | -0.80 | - |
+| Baseline + jump guard | -73.56 | -67.94 | 7,131 | -1.03 | 19 of 25 markets |
+| Front of queue, fees off | +195.86 | +22.68 | 60,030 | +0.33 | 24 of 25 markets |
+
+Almost all of the baseline's loss comes inside jump windows. The guard cuts the total loss by two-thirds, but only by trading a quarter as much: per contract it loses *more* than the baseline. On the four Nov 17 matches, the first test that played no part in designing it, it did better than the baseline in only 7 of 12 markets. It reduces exposure; it does not find an edge, and it still loses money. The only profitable row assumes front-of-queue fills and no fees, so whatever edge there is goes to queue position and fees, which a slow retail bot does not have. The best single result (+$11.72 on Utah) came from holding the right side through a late jump; that is luck, not the guard. The settings were chosen on reasoning, not tuned on these results. In the simulator the guard never fires, because the simulator has no news-driven jumps; that is a gap in the simulator, not evidence the guard is harmless everywhere. The backtest also lets the guard react to a trade at the trade's exchange timestamp, which a bot polling every few seconds could not do; it needs a streaming trade feed to behave as tested.
 
 ### Strategy 2: cross-outcome arbitrage
 
@@ -278,9 +300,29 @@ Two lessons from testing this path on a replayed simulation:
 
 On a replay where trades arrive in time order, paper and backtest results match exactly (same fills, same P&L), which is a useful check that the live path really is the same code. Live, they should differ for reasons the report lists: trades are only discovered at the next poll, a trade that arrives after our order went live but happened before it cannot fill us, and a restart drops open orders. The size of that gap is a direct measure of how optimistic the backtest is.
 
+## Signal research (in progress)
+
+Question: can the visible order book predict the next 10 or 60 seconds of mid-price moves well enough to improve the market maker's fair value? Code: `research/features.py` (features and split) and `scripts/signal_research.py` (models and report, written to `results/signal/`).
+
+```bash
+python scripts/signal_research.py                     # every recording in data/raw/
+python scripts/analyse_recording.py --data DIR        # P&L around price jumps for one recording
+```
+
+**Features**, one row per snapshot: mid, spread, top-level and 3-level imbalance, microprice minus mid, signed trade flow over 10 and 60 seconds (raw and divided by visible depth), mid change over the last 10 and 60 seconds, and log hours to scheduled expiry. **Targets**: mid in 10 and 60 seconds minus mid now.
+
+**Rules that keep it honest:**
+
+* *No lookahead.* A feature at time t uses only the snapshot at t, earlier snapshots and trades stamped at or before t. Time to resolution uses the *scheduled* expiry recorded when collection started, not `close_time`, because Kalshi rewrites `close_time` to the moment a market actually closed, which would tell the model when the game ended. `tests/test_research_features.py` cuts a recording in half and checks that no feature before the cut changes.
+* *Split by time, never at random.* Earlier days train, later days test (or an earlier/later cut within one day). Snapshots a few seconds apart are nearly identical and their targets overlap, so a random split puts near-copies of test rows in training and inflates every score. Training rows within one horizon of the test period are also dropped (an embargo), because their targets look into it.
+* *Scaler fitted on training data only,* inside a scikit-learn `Pipeline`, and the penalty for Ridge, Lasso and Elastic Net chosen by `TimeSeriesSplit` cross-validation (with a gap of one horizon) on the training set only.
+* *A prediction is only useful if it beats the cost of acting on it:* the report counts how often |predicted move| exceeds half the spread plus the maker fee, and the realised move when it does.
+
+**Second run (Nov 16-17, 2026; about 92,000 snapshots, 22 markets, 10 recordings; train on Nov 16, test on Nov 17, which holds the in-play periods of one NFL, three NBA and one NHL game):** the first run's picture held. Top-of-book imbalance alone gave an out-of-sample R² of 0.0008 at 10 s and 0.0018 at 60 s, and got the direction of non-zero 10-second moves right 65% of the time. Lasso again kept only top-level imbalance at 10 s and nothing at 60 s, while OLS on all features over-fitted (R² -0.26 at 10 s). The signal is real but far too small: the fitted slope is 0.055 cents per unit of imbalance, so even a completely one-sided top of book predicts about 0.05 cents of movement over 10 seconds. That is a tenth of the smallest possible half-spread. Used as a fair-value adjustment, it would almost never move a quote by a tick, and no prediction beat half the spread plus fees. 94% of 10-second test moves were exactly zero, because prices move in 1-cent steps and the spread is usually 1 cent, so the target is lumpy and mostly zero. The long-dated markets (Fed decision, NBA and Super Bowl champions, 2028 president) never moved during the test day at 5-second polling and add nothing; the game markets are where the moves are. Per-market R² swings and is meaningless where the price never moved. Still two days of data: treat this as a consistency check, not a result.
+
 ## Limitations and what the results do NOT show
 
-* **No real data yet.** Every number above is simulated. The simulator encodes my assumptions about informed flow, spreads and quote noise; a strategy that works or fails in it says as much about those assumptions as about the strategy.
+* **Little real data yet.** The Results section is simulated; the real-data numbers (jump guard, signal research) come from six games and a few long-dated markets over two days. The simulator encodes my assumptions about informed flow, spreads and quote noise; a strategy that works or fails in it says as much about those assumptions as about the strategy.
 * **Our orders have no market impact.** The data is replayed as if we were never there. Other traders do not react to our quotes and our taker orders do not move later prices. For a small, slow strategy this matters less; for anything that trades a lot relative to displayed size it matters a great deal.
 * **The fill model is a model.** Queue position is estimated, not known. Cancellations are assumed to come from behind us, which is conservative but not certain. Hidden orders and other makers' reactions to our quotes are ignored.
 * **Fills on book crosses use displayed size.** In reality, some of the quotes that crossed our level might have been post-only and cancelled instead of trading with us.

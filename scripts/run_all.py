@@ -79,10 +79,11 @@ class Scenario:
     build: Builder
 
 
-def _mm(half_spread: float = 1.0, skew: float = 3.0, fees: FeeModel = FEES_ON, queue: str = "back") -> Builder:
+def _mm(half_spread: float = 1.0, skew: float = 3.0, fees: FeeModel = FEES_ON, queue: str = "back",
+        jump_guard: bool = False) -> Builder:
     def build(data: MarketData, mm_market: str) -> tuple[Strategy, BacktestConfig]:
         strategy = InventorySkewMarketMaker(MarketMakerConfig(
-            market_id=mm_market, half_spread_cents=half_spread, skew_cents_at_max=skew))
+            market_id=mm_market, half_spread_cents=half_spread, skew_cents_at_max=skew, jump_guard=jump_guard))
         return strategy, BacktestConfig(fees=fees, fill_model=FillModel(queue_position=queue))
     return build
 
@@ -100,6 +101,7 @@ SCENARIOS = [
     Scenario("mm_base", "MM: baseline (back of queue, fees on)", "mm", _mm()),
     Scenario("mm_no_fees", "MM: fees off", "mm", _mm(fees=FEES_OFF)),
     Scenario("mm_no_skew", "MM: no inventory skew", "mm", _mm(skew=0.0)),
+    Scenario("mm_jump_guard", "MM: baseline + jump guard", "mm", _mm(jump_guard=True)),
     Scenario("mm_front_queue", "MM: front of queue (unrealistic)", "mm", _mm(queue="front")),
     Scenario("mm_front_queue_no_fees", "MM: front of queue, fees off", "mm", _mm(queue="front", fees=FEES_OFF)),
     *[Scenario(f"mm_half_spread_{h:g}", f"MM: half-spread {h:g}c", "sweep", _mm(half_spread=h))

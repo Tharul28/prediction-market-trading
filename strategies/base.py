@@ -15,10 +15,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Mapping, Union
+from typing import TYPE_CHECKING, Mapping, Union
 
 from backtest.orders import Fill, Side
 from orderbook.book import OrderBookSnapshot
+
+if TYPE_CHECKING:
+    from backtest.events import TradeEvent
 
 
 @dataclass(frozen=True)
@@ -118,6 +121,14 @@ class Strategy(ABC):
         Returns:
             Actions to send to the engine (possibly empty).
         """
+
+    def on_trade(self, trade: "TradeEvent", context: StrategyContext) -> list[Action]:
+        """React to a public trade in one of ``markets``. Optional; default does nothing.
+
+        Called after the engine has matched the trade against our resting
+        orders, so any fill it caused is already in ``context.positions``.
+        """
+        return []
 
     def on_fill(self, fill: Fill, context: StrategyContext) -> None:
         """Called after each of this strategy's fills. Optional."""

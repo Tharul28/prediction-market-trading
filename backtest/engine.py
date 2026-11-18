@@ -209,14 +209,16 @@ class BacktestEngine:
         resting = [o for o in self.live_orders
                    if o.market_id == event.market_id and o.status is OrderStatus.ACTIVE and not o.is_taker
                    and o.activated_at is not None and o.activated_at <= event.timestamp]
-        if not resting:
-            return
-        allocations = self.config.fill_model.match_trade(resting, event.price, event.size, event.aggressor)
-        for order, size in allocations:
-            # A resting order always trades at its own limit price.
-            reason = "queue" if order.price == event.price else "trade_through"
-            self._fill(order, size, order.price, Liquidity.MAKER, event.timestamp, reason)
-        self._prune_live_orders()
+        if resting:
+            allocations = self.config.fill_model.match_trade(resting, event.price, event.size, event.aggressor)
+            for order, size in allocations:
+                # A resting order always trades at its own limit price.
+                reason = "queue" if order.price == event.price else "trade_through"
+                self._fill(order, size, order.price, Liquidity.MAKER, event.timestamp, reason)
+            self._prune_live_orders()
+        if event.market_id in self.strategy.markets:
+            actions = self.strategy.on_trade(event, self._context(event.timestamp))
+            self._handle_actions(actions, event.timestamp)
 
     def _on_book(self, event: BookEvent) -> None:
         """Process a new snapshot: resting orders, taker orders, then the strategy."""

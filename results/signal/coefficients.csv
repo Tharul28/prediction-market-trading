@@ -1,0 +1,75 @@
+horizon_s,model,feature,coefficient
+10.0,B: OLS on imbalance,imb_1,0.054958859562396274
+10.0,Ridge,mid,0.0022520489405423133
+10.0,Ridge,spread,0.0008390773593919217
+10.0,Ridge,imb_1,0.0076932306252952345
+10.0,Ridge,imb_3,0.003294888932279597
+10.0,Ridge,micro_dev,0.007126097926387736
+10.0,Ridge,flow_10s,-0.0007168584739123297
+10.0,Ridge,flow_60s,0.0009702318511295657
+10.0,Ridge,flow_rel_10s,-0.001828389947147073
+10.0,Ridge,flow_rel_60s,-0.0033995272141033018
+10.0,Ridge,ret_10s,-0.005434307706536141
+10.0,Ridge,ret_60s,-0.0028952119438765698
+10.0,Ridge,log_hours_to_expiry,0.00031010885173065185
+10.0,Lasso,mid,0.0
+10.0,Lasso,spread,0.0
+10.0,Lasso,imb_1,0.010318323569736821
+10.0,Lasso,imb_3,0.0
+10.0,Lasso,micro_dev,0.0
+10.0,Lasso,flow_10s,-0.0
+10.0,Lasso,flow_60s,0.0
+10.0,Lasso,flow_rel_10s,-0.0
+10.0,Lasso,flow_rel_60s,-0.0
+10.0,Lasso,ret_10s,-0.0
+10.0,Lasso,ret_60s,-0.0
+10.0,Lasso,log_hours_to_expiry,0.0
+10.0,Elastic Net,mid,0.0
+10.0,Elastic Net,spread,0.0
+10.0,Elastic Net,imb_1,0.010983954138940417
+10.0,Elastic Net,imb_3,0.0
+10.0,Elastic Net,micro_dev,0.0
+10.0,Elastic Net,flow_10s,-0.0
+10.0,Elastic Net,flow_60s,0.0
+10.0,Elastic Net,flow_rel_10s,-0.0
+10.0,Elastic Net,flow_rel_60s,-0.0
+10.0,Elastic Net,ret_10s,-0.0
+10.0,Elastic Net,ret_60s,-0.0
+10.0,Elastic Net,log_hours_to_expiry,0.0
+60.0,B: OLS on imbalance,imb_1,0.1307023335061841
+60.0,Ridge,mid,0.006154547242121201
+60.0,Ridge,spread,0.0021112668917875072
+60.0,Ridge,imb_1,0.008847273065145293
+60.0,Ridge,imb_3,0.003797894103646198
+60.0,Ridge,micro_dev,0.008460878079706725
+60.0,Ridge,flow_10s,0.0006672714841784702
+60.0,Ridge,flow_60s,0.0019323647132388894
+60.0,Ridge,flow_rel_10s,-0.0015030094012559831
+60.0,Ridge,flow_rel_60s,-0.0013774145693583209
+60.0,Ridge,ret_10s,-0.004424156832227641
+60.0,Ridge,ret_60s,0.0013263099171944386
+60.0,Ridge,log_hours_to_expiry,-0.0001464430739841033
+60.0,Lasso,mid,0.0
+60.0,Lasso,spread,0.0
+60.0,Lasso,imb_1,0.0
+60.0,Lasso,imb_3,0.0
+60.0,Lasso,micro_dev,0.0
+60.0,Lasso,flow_10s,0.0
+60.0,Lasso,flow_60s,0.0
+60.0,Lasso,flow_rel_10s,0.0
+60.0,Lasso,flow_rel_60s,0.0
+60.0,Lasso,ret_10s,0.0
+60.0,Lasso,ret_60s,0.0
+60.0,Lasso,log_hours_to_expiry,0.0
+60.0,Elastic Net,mid,0.0
+60.0,Elastic Net,spread,0.0
+60.0,Elastic Net,imb_1,0.0
+60.0,Elastic Net,imb_3,0.0
+60.0,Elastic Net,micro_dev,0.0
+60.0,Elastic Net,flow_10s,0.0
+60.0,Elastic Net,flow_60s,0.0
+60.0,Elastic Net,flow_rel_10s,0.0
+60.0,Elastic Net,flow_rel_60s,0.0
+60.0,Elastic Net,ret_10s,0.0
+60.0,Elastic Net,ret_60s,0.0
+60.0,Elastic Net,log_hours_to_expiry,0.0
