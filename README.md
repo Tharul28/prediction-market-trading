@@ -59,6 +59,8 @@ python scripts/run_all.py --data data/raw/myevent --compare       # backtest rea
 python scripts/analyse_recording.py --data data/raw/myevent       # P&L around price jumps (goals) vs the rest
 ```
 
+**Several recordings at once, surviving restarts.** List them in a manifest, one per line as `out_dir|interval_s|start_at (may be empty)|other collect arguments` (see `data/raw/collectors.txt`), and run `scripts/resume_collectors.sh`. It starts each collector in the background under `caffeinate` (so the Mac does not idle-sleep), logging to `out_dir/collector.log`, and skips any that are already running or finished, so it is safe to run again after a reboot. Closing a laptop's lid pauses the collectors; they carry on when it wakes.
+
 **Paper trading** (no orders are sent anywhere):
 
 ```bash
@@ -97,6 +99,8 @@ scripts/
   run_all.py        runs everything and writes tables and charts
   analyse_recording.py  splits real-data P&L into price-jump windows (goals) and the rest
   signal_research.py    predicts 10 s / 60 s mid moves: baselines, Ridge, Lasso, Elastic Net
+  collapse_study.py     does a collapsing best bid/ask warn of a price jump?
+  resume_collectors.sh  (re)starts every collector listed in a manifest
   plotting.py       charts
 research/
   features.py       lookahead-free features, targets and the time-based train/test split
@@ -307,6 +311,7 @@ Question: can the visible order book predict the next 10 or 60 seconds of mid-pr
 ```bash
 python scripts/signal_research.py                     # every recording in data/raw/
 python scripts/analyse_recording.py --data DIR        # P&L around price jumps for one recording
+python scripts/collapse_study.py                      # every game recording in data/raw/
 ```
 
 **Features**, one row per snapshot: mid, spread, top-level and 3-level imbalance, microprice minus mid, signed trade flow over 10 and 60 seconds (raw and divided by visible depth), mid change over the last 10 and 60 seconds, and log hours to scheduled expiry. **Targets**: mid in 10 and 60 seconds minus mid now.
@@ -324,7 +329,7 @@ python scripts/analyse_recording.py --data DIR        # P&L around price jumps f
 
 ## Limitations and what the results do NOT show
 
-* **Little real data yet.** The Results section is simulated; the real-data numbers (jump guard, signal research) come from six games and a few long-dated markets over two days. The simulator encodes my assumptions about informed flow, spreads and quote noise; a strategy that works or fails in it says as much about those assumptions as about the strategy.
+* **Little real data yet.** The Results section is simulated; the real-data numbers (jump guard, signal research) come from ten games (one NFL, three NBA, one NHL, five football) and a few long-dated markets, recorded on Nov 16-17, 2026. The simulator encodes my assumptions about informed flow, spreads and quote noise; a strategy that works or fails in it says as much about those assumptions as about the strategy.
 * **Our orders have no market impact.** The data is replayed as if we were never there. Other traders do not react to our quotes and our taker orders do not move later prices. For a small, slow strategy this matters less; for anything that trades a lot relative to displayed size it matters a great deal.
 * **The fill model is a model.** Queue position is estimated, not known. Cancellations are assumed to come from behind us, which is conservative but not certain. Hidden orders and other makers' reactions to our quotes are ignored.
 * **Fills on book crosses use displayed size.** In reality, some of the quotes that crossed our level might have been post-only and cancelled instead of trading with us.
