@@ -91,3 +91,20 @@ def test_collector_keeps_going_while_markets_are_open(tmp_path):
 
 def test_parse_utc_defaults_to_utc():
     assert parse_utc("2026-11-17T19:15:00") == parse_utc("2026-11-17T19:15:00Z") == 1794942900.0
+
+
+def test_until_online_waits_out_network_errors_but_not_http_errors():
+    import requests
+    from data.kalshi import until_online
+    calls, naps = [], []
+    def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise requests.ConnectionError("offline")
+        return "ok"
+    assert until_online(flaky, wait_s=60, sleep=naps.append) == "ok"
+    assert naps == [60, 60]
+    def not_found():
+        raise requests.HTTPError("404")
+    with pytest.raises(requests.HTTPError):
+        until_online(not_found, sleep=naps.append)

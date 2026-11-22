@@ -589,7 +589,7 @@ def main() -> None:
         mutually_exclusive = args.mutually_exclusive
         description = ""
         if args.event:
-            event, markets = client.get_event(args.event)
+            event, markets = until_online(lambda: client.get_event(args.event))
             tickers = [m["ticker"] for m in markets if m.get("status") in (None, "active", "open")]
             mutually_exclusive = mutually_exclusive or bool(event.get("mutually_exclusive", False))
             description = f"Kalshi event {args.event}: {event.get('title', '')}"
@@ -624,6 +624,28 @@ def parse_utc(text: str) -> float:
     if stamp.tzinfo is None:
         stamp = stamp.tz_localize("UTC")
     return stamp.timestamp()
+
+
+def until_online(request: Callable[[], Any], wait_s: float = 60.0, give_up_s: float = 6 * 3600.0,
+                 sleep: Callable[[float], None] = time.sleep) -> Any:
+    """Run ``request`` until it gets past network errors, retrying every ``wait_s`` seconds.
+
+    A collector that wakes at its start time while the laptop is offline (lid
+    closed, a maintenance wake, no Wi-Fi yet) must wait for the network rather
+    than crash. HTTP errors such as 404 are not network errors and are raised.
+    """
+    import requests
+
+    waited = 0.0
+    while True:
+        try:
+            return request()
+        except (requests.ConnectionError, requests.Timeout) as error:
+            if waited >= give_up_s:
+                raise
+            print(f"  network unavailable ({type(error).__name__}); retrying in {wait_s:.0f} s", flush=True)
+            sleep(wait_s)
+            waited += wait_s
 
 
 def wait_until(start: float) -> None:
