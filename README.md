@@ -100,6 +100,7 @@ scripts/
   analyse_recording.py  splits real-data P&L into price-jump windows (goals) and the rest
   signal_research.py    predicts 10 s / 60 s mid moves: baselines, Ridge, Lasso, Elastic Net
   collapse_study.py     does a collapsing best bid/ask warn of a price jump?
+  mm_lab.py             market-maker variants, chosen on early games, checked on later ones
   resume_collectors.sh  (re)starts every collector listed in a manifest
   plotting.py       charts
 research/
@@ -326,6 +327,20 @@ python scripts/collapse_study.py                      # every game recording in 
 **Second run (Nov 16-17, 2026; about 92,000 snapshots, 22 markets, 10 recordings; train on Nov 16, test on Nov 17, which holds the in-play periods of one NFL, three NBA and one NHL game):** the first run's picture held. Top-of-book imbalance alone gave an out-of-sample R² of 0.0008 at 10 s and 0.0018 at 60 s, and got the direction of non-zero 10-second moves right 65% of the time. Lasso again kept only top-level imbalance at 10 s and nothing at 60 s, while OLS on all features over-fitted (R² -0.26 at 10 s). The signal is real but far too small: the fitted slope is 0.055 cents per unit of imbalance, so even a completely one-sided top of book predicts about 0.05 cents of movement over 10 seconds. That is a tenth of the smallest possible half-spread. Used as a fair-value adjustment, it would almost never move a quote by a tick, and no prediction beat half the spread plus fees. 94% of 10-second test moves were exactly zero, because prices move in 1-cent steps and the spread is usually 1 cent, so the target is lumpy and mostly zero. The long-dated markets (Fed decision, NBA and Super Bowl champions, 2028 president) never moved during the test day at 5-second polling and add nothing; the game markets are where the moves are. Per-market R² swings and is meaningless where the price never moved. Still two days of data: treat this as a consistency check, not a result.
 
 **Does a collapsing touch warn of a jump?** (`scripts/collapse_study.py`, 10 game recordings, 25 markets.) A collapse is the guard's trigger: the best bid or ask keeps its price but loses 80%+ of a 50+ contract level between two snapshots, 91% of the time mostly through cancellations rather than trades. After an ask collapse the price went up, and after a bid collapse it went down, by +0.25c on average over 60 s. It moved 5c or more the predicted way within 60 s 7.6% of the time, against 1.7% at a random snapshot (4.5 times the base rate). Looked at from the other side, 46% of the 105 jumps of 8c+ had a same-direction collapse in the minute before they started (median 30 s earlier), against 26% for a random minute of play. So the signal is real and visible to a polling bot, but weak: most collapses are false alarms, and +0.25c is far below the ~2c a taker pays in half-spread plus fee near 50c. It is a reason to step out of the way, as the guard does, not a reason to trade.
+
+## Trying to make the market maker profitable
+
+`scripts/mm_lab.py` runs market-maker variants on every game with each series' real fees (Nations League markets charge makers nothing; the club and US leagues charge 0.0175 x P x (1 - P)), back-of-queue fills and 0.5 s latency. Variants were chosen on the 10 games of Nov 16-17 and then checked once on the 8 games of Nov 20-23, which were not looked at while choosing. Before the check, the variant with the smallest training loss per contract was named as the pick: quote at the touch, microprice as fair value, jump guard with a 60-second pause.
+
+| Variant | Train: net $ (c/contract) | Test: net $ (c/contract) |
+|---|---|---|
+| Default: one tick behind the touch | -164.54 (-0.58) | -154.63 (-1.51) |
+| Quote at the touch | -304.40 (-0.58) | -217.51 (-1.20) |
+| Behind the touch + jump guard | -56.24 (-0.76) | -49.57 (-2.32) |
+| **Pick:** at the touch + microprice + guard, 60 s pause | -24.21 (-0.34) | -30.95 (-1.67) |
+| Least loss on test: behind the touch + microprice + guard, 120 s | -12.59 (-0.70) | -6.52 (-1.06) |
+
+No variant made money on either set. Quoting at the touch roughly doubles fills at the same loss per fill, so the default's position one tick back was not the problem: fills at the touch are adversely selected too. Every change that helped did so by trading less, and the loss per contract on the test games was two to five times the training figure. The pick did not hold up. A slow, back-of-queue maker loses about 0.5-2 cents on every contract it trades in these markets, and fees are only a third of that; the rest is being filled just before the price moves. The one profitable assumption in the whole project is front-of-queue fills, so any real edge would have to come from queue position (speed, or markets with thin queues), not from quoting rules.
 
 ## Limitations and what the results do NOT show
 

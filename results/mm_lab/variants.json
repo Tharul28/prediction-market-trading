@@ -1,0 +1,69 @@
+{
+  "behind_touch": {
+    "half_spread_cents": 1.0
+  },
+  "behind_touch_guard": {
+    "half_spread_cents": 1.0,
+    "jump_guard": true
+  },
+  "at_touch": {
+    "half_spread_cents": 0.5
+  },
+  "at_touch_guard": {
+    "half_spread_cents": 0.5,
+    "jump_guard": true
+  },
+  "at_touch_guard_micro": {
+    "half_spread_cents": 0.5,
+    "jump_guard": true,
+    "fair_value": "microprice"
+  },
+  "at_touch_guard_skew1": {
+    "half_spread_cents": 0.5,
+    "jump_guard": true,
+    "skew_cents_at_max": 1.0
+  },
+  "at_touch_guard_skew6": {
+    "half_spread_cents": 0.5,
+    "jump_guard": true,
+    "skew_cents_at_max": 6.0
+  },
+  "at_touch_guard_60s": {
+    "half_spread_cents": 0.5,
+    "jump_guard": true,
+    "guard_cooldown_s": 60.0
+  },
+  "behind_guard_60s": {
+    "half_spread_cents": 1.0,
+    "jump_guard": true,
+    "guard_cooldown_s": 60.0
+  },
+  "behind_guard_120s": {
+    "half_spread_cents": 1.0,
+    "jump_guard": true,
+    "guard_cooldown_s": 120.0
+  },
+  "at_touch_guard_120s": {
+    "half_spread_cents": 0.5,
+    "jump_guard": true,
+    "guard_cooldown_s": 120.0
+  },
+  "at_touch_guard_micro_60s": {
+    "half_spread_cents": 0.5,
+    "jump_guard": true,
+    "guard_cooldown_s": 60.0,
+    "fair_value": "microprice"
+  },
+  "at_touch_guard_micro_120s": {
+    "half_spread_cents": 0.5,
+    "jump_guard": true,
+    "guard_cooldown_s": 120.0,
+    "fair_value": "microprice"
+  },
+  "behind_guard_micro_120s": {
+    "half_spread_cents": 1.0,
+    "jump_guard": true,
+    "guard_cooldown_s": 120.0,
+    "fair_value": "microprice"
+  }
+}
