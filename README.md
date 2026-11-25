@@ -2,14 +2,14 @@
 
 An event-driven backtester, live data collector and paper trader for binary prediction markets, built around Kalshi's public order book data. It turns order books into trading quantities (spread, mid, microprice, implied probability, depth, imbalance), runs a market-making strategy and a cross-outcome arbitrage check through a conservative fill model with fees, latency and position limits, and reports the results with the caveats they need.
 
-This is a first working draft. All results below come from **simulated** data, because the environment it was built in could not reach any exchange. The code to collect real Kalshi data, backtest it with one command and paper trade on it is included and tested against a replay of simulated data.
+Results come from live Kalshi recordings of 18 games (football and US sports) between 16 and 23 November 2026, and from a simulator used to measure how much each backtest assumption is worth. The code to collect real Kalshi data, backtest it with one command and paper trade on it is included.
 
-## Decisions and assumptions
+## Assumptions
 
-Choices made without asking, in rough order of importance. Each one is a reasonable default, not the only option.
+The main modelling choices, roughly in order of importance. Each one is a reasonable default, not the only option.
 
 1. **Data source: Kalshi's public market data API.** Order books, trades, events and markets can be read without an account or API key. Reasons and the alternatives considered are in [Market and data source](#market-and-data-source).
-2. **All results in this draft are simulated.** The simulator is described in [Methodology](#the-simulated-market). Its parameters were picked to look like a liquid-ish three-outcome market before any strategy was run, and were not tuned to make strategies look good. One change was made after the first test run: spreads and level sizes were originally redrawn independently every second, which made queue estimates collapse unrealistically fast and flattered the market maker. They now persist over time. This was a realism fix, and it made the results worse rather than better.
+2. **The Results tables are simulated.** The simulator is described in [Methodology](#the-simulated-market). Its parameters were picked to look like a liquid-ish three-outcome market before any strategy was run, and were not tuned to make strategies look good. One change was made after the first test run: spreads and level sizes were originally redrawn independently every second, which made queue estimates collapse unrealistically fast and flattered the market maker. They now persist over time. This was a realism fix, and it made the results worse rather than better.
 3. **Prices are integer cents (1 to 99), contracts pay $1.** A price of 37 is read as an implied probability of 0.37. Integer cents make price comparisons exact.
 4. **Shorting YES is allowed** and treated as buying NO at 100 minus the price, which is how it works on Kalshi. P&L is identical; only the collateral differs (handled in paper trading, see point 17).
 5. **Fees follow Kalshi's published schedule:** taker fee = 0.07 x contracts x P x (1 - P), maker fee = 0.0175 x contracts x P x (1 - P), rounded up to the next cent. Many Kalshi markets charge makers nothing; charging the maker fee by default is the conservative choice. Fees are rounded per fill rather than per order, which can only overcharge. Fees switch off with `FeeModel(enabled=False)`.
@@ -27,7 +27,6 @@ Choices made without asking, in rough order of importance. Each one is a reasona
 17. **Paper trading balance:** collateral works as on Kalshi (a YES costs its price, a short costs 100 minus the price) and live orders reserve their worst-case cost. Selling YES you already hold also reserves collateral, which is conservative. After a restart, orders that were open are treated as cancelled.
 18. **Whether an event's outcomes are exhaustive** (exactly one must win) is not provided by Kalshi's API, so the collector defaults to "not exhaustive", which disables the buy-every-outcome basket. Pass `--exhaustive` only after reading the event's rules.
 19. **Daily summaries use the Europe/London calendar day.**
-20. **No machine learning.** Nothing in the problem needed it.
 
 ## Motivation
 
@@ -122,7 +121,7 @@ Kalshi won on three practical points beyond cost. Its fee formula is published a
 
 One quirk: Kalshi returns only bids, for YES and for NO. A NO bid at p is an offer to sell YES at 100 - p (one YES plus one NO always pays exactly $1), so `data/kalshi.py` converts NO bids into YES asks.
 
-**What is real and what is simulated in this draft.** The collector, parsers, storage, session splitting, real-data pipeline and paper trader are complete and tested against documented example payloads and a replay of simulated data. The collector and real-data backtest have since been run on live Kalshi recordings (see the jump guard and signal research sections). The paper trader has not been run live. Every number in [Results](#results-simulated-data) is from the simulator.
+**What is real and what is simulated.** The collector, parsers, storage, session splitting, real-data pipeline and paper trader are complete and tested against documented example payloads and a replay of simulated data. The collector and real-data backtest have since been run on live Kalshi recordings (see the jump guard and signal research sections). The paper trader has not been run live. Every number in [Results](#results-simulated-data) is from the simulator.
 
 ## Methodology
 
@@ -351,7 +350,7 @@ No variant made money on either set. Quoting at the touch roughly doubles fills 
 * **Polled data is coarse.** With snapshots every few seconds, everything that happened between polls is invisible except the trades, and trade timestamps (Kalshi's clock) and book timestamps (local clock) are not perfectly aligned.
 * **Taker liquidity is the displayed book,** with no competition from other arbitrageurs. Real arbitrage is a speed race, and the fastest participants would take most of these opportunities first. Results for the arbitrage scenarios are optimistic in that respect, and pessimistic in that legging would be less frequent on a faster connection.
 * **Marking at mid is generous** for strategies that end with inventory. Liquidation and settlement P&L are reported for this reason, and for the arbitrage strategy they tell a very different story.
-* **The half-spread sweep is in-sample.** It shows sensitivity, not an optimal setting. There is no out-of-sample test in this draft.
+* **The half-spread sweep is in-sample.** It shows sensitivity, not an optimal setting. There is no out-of-sample test of it.
 * **30 sessions is a small sample** for a strategy whose session P&L has a standard deviation of $3 or more. Differences under about $1.50 between scenarios are within noise.
 * **Fee schedules change.** The Kalshi formula and rates were checked in November 2026; some series have their own multipliers. Check `fee_type` and `fee_multiplier` for the markets you trade.
 * **No settlement-time effects.** Prices converge to 0 or 100 as an event resolves, and spreads and informed trading change near the end. The simulation does not model this.
